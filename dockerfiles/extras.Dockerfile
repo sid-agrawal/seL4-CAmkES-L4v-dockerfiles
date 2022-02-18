@@ -21,3 +21,6 @@ RUN apt-get update -q \
         # Add more dependencies here
         cowsay \
         sudo
+RUN ln -df /usr/bin/python3 /usr/bin/python
+RUN apt-get install -y gdb-multiarch
+RUN apt-get install -y tree ack
