@@ -24,3 +24,4 @@ RUN apt-get update -q \
 RUN ln -df /usr/bin/python3 /usr/bin/python
 RUN apt-get install -y gdb-multiarch
 RUN apt-get install -y tree ack
+RUN apt-get install -y vim
