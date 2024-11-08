@@ -26,7 +26,7 @@ test -d "$DIR" || DIR=$PWD
 : "${SCM:=https://github.com}"
 
 # Debian Snapshot date
-: "${SNAPSHOT_DATE:=20211208T025308Z}"
+: "${SNAPSHOT_DATE:=20240509T144113Z}"
 
 if [ "$DESKTOP_MACHINE" = "no" ] ; then
 
@@ -69,6 +69,7 @@ as_root apt-get install -y --no-install-recommends \
 
 as_root apt-get install -y --no-install-recommends \
         bc \
+        xxd \
         ca-certificates \
         devscripts \
         expect \
@@ -77,14 +78,14 @@ as_root apt-get install -y --no-install-recommends \
         iputils-ping \
         jq \
         make \
-        python \
+        python-is-python3 \
         python3-dev \
         python3-pip \
         ssh \
         traceroute \
         # end of list
 
-# Install python dependencies for both python 2 & 3
+# Install python dependencies
 # Upgrade pip first, then install setuptools (required for other pip packages)
 # Install some basic python tools
 as_root pip3 install --no-cache-dir \

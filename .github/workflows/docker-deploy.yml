@@ -1,0 +1,217 @@
+# Copyright 2022, Proofcraft Pt Ltd
+#
+# SPDX-License-Identifier: BSD-2-Clause
+
+# Build and deploy standard set of docker containers
+
+name: Deploy
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+  schedule:
+    # every Thu at 17:03, i.e. once a week at not-quite a full hour
+    - cron: "3 17 * * 4"
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    name: Create tag
+    outputs:
+      tag: ${{ steps.date.outputs.tag }}
+    steps:
+      - name: Get date
+        id: date
+        run: |
+          echo "tag=$(date '+%Y_%m_%d')" >> $GITHUB_OUTPUT
+
+  # There is unfortunately no point in parallelising the build of the different
+  # images, because they depend on each other. So sequential is the best we can do.
+  # We still split of the l4v build, because the GitHub runner otherwise runs out of
+  # disk space.
+  build-amd64:
+    name: Docker (AMD64)
+    runs-on: ubuntu-latest
+    needs: tag
+    env:
+      TAG: ${{ needs.tag.outputs.tag }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: "Build trustworthysystems/sel4"
+      run: |
+        ./build.sh -v -b sel4
+        docker tag trustworthysystems/sel4:latest trustworthysystems/sel4:${TAG}-amd64
+    # the following will also build the plain camkes image:
+    - name: "Build trustworthysystems/camkes-cakeml-rust"
+      run: |
+       ./build.sh -v -b camkes -s cakeml -s rust
+       docker tag trustworthysystems/camkes:latest trustworthysystems/camkes:${TAG}-amd64
+       docker tag trustworthysystems/camkes-cakeml-rust:latest \
+                  trustworthysystems/camkes-cakeml-rust:${TAG}-amd64
+
+    - name: Authenticate
+      if: ${{ github.repository_owner == 'seL4' }}
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USER }}
+        password: ${{ secrets.DOCKER_TOKEN }}
+
+    - name: "Push trustworthysystems/sel4"
+      if: ${{ github.repository_owner == 'seL4' }}
+      run: |
+        docker push trustworthysystems/sel4:${TAG}-amd64
+        docker tag trustworthysystems/sel4:${TAG}-amd64 trustworthysystems/sel4:latest-amd64
+        docker push trustworthysystems/sel4:latest-amd64
+    - name: "Push trustworthysystems/camkes"
+      if: ${{ github.repository_owner == 'seL4' }}
+      run: |
+        docker push trustworthysystems/camkes:${TAG}-amd64
+        docker tag trustworthysystems/camkes:${TAG}-amd64 trustworthysystems/camkes:latest-amd64
+        docker push trustworthysystems/camkes:latest-amd64
+    - name: "Push trustworthysystems/camkes-cakeml-rust"
+      if: ${{ github.repository_owner == 'seL4' }}
+      run: |
+        docker push trustworthysystems/camkes-cakeml-rust:${TAG}-amd64
+        docker tag trustworthysystems/camkes-cakeml-rust:${TAG}-amd64 \
+                   trustworthysystems/camkes-cakeml-rust:latest-amd64
+        docker push trustworthysystems/camkes-cakeml-rust:latest-amd64
+
+  build-arm64:
+    name: Docker (ARM64)
+    runs-on: [self-hosted, macos, ARM64]
+    needs: tag
+    env:
+      TAG: ${{ needs.tag.outputs.tag }}
+    steps:
+    - name: Authenticate
+      if: ${{ github.repository_owner == 'seL4' }}
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USER }}
+        password: ${{ secrets.DOCKER_TOKEN }}
+
+    - name: "Remove old images"
+      run: docker system prune -a -f
+
+    - uses: actions/checkout@v4
+    - name: "Build trustworthysystems/sel4"
+      run: |
+        ./build.sh -vr -b sel4
+        docker tag trustworthysystems/sel4:latest trustworthysystems/sel4:${TAG}-arm64
+    # the following will also build the plain camkes image:
+    - name: "Build trustworthysystems/camkes-cakeml-rust"
+      run: |
+       ./build.sh -vr -b camkes -s cakeml -s rust
+       docker tag trustworthysystems/camkes:latest trustworthysystems/camkes:${TAG}-arm64
+       docker tag trustworthysystems/camkes-cakeml-rust:latest \
+                  trustworthysystems/camkes-cakeml-rust:${TAG}-arm64
+
+    - name: "Push trustworthysystems/sel4"
+      if: ${{ github.repository_owner == 'seL4' }}
+      run: |
+        docker push trustworthysystems/sel4:${TAG}-arm64
+        docker tag trustworthysystems/sel4:${TAG}-arm64 trustworthysystems/sel4:latest-arm64
+        docker push trustworthysystems/sel4:latest-arm64
+    - name: "Push trustworthysystems/camkes"
+      if: ${{ github.repository_owner == 'seL4' }}
+      run: |
+        docker push trustworthysystems/camkes:${TAG}-arm64
+        docker tag trustworthysystems/camkes:${TAG}-arm64 trustworthysystems/camkes:latest-arm64
+        docker push trustworthysystems/camkes:latest-arm64
+    - name: "Push trustworthysystems/camkes-cakeml-rust"
+      if: ${{ github.repository_owner == 'seL4' }}
+      run: |
+        docker push trustworthysystems/camkes-cakeml-rust:${TAG}-arm64
+        docker tag trustworthysystems/camkes-cakeml-rust:${TAG}-arm64 \
+                   trustworthysystems/camkes-cakeml-rust:latest-arm64
+        docker push trustworthysystems/camkes-cakeml-rust:latest-arm64
+
+  build-l4v:
+    name: Docker (l4v, AMD64)
+    runs-on: ubuntu-latest
+    needs: [tag, build-amd64]
+    env:
+      TAG: ${{ needs.tag.outputs.tag }}
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: "Build trustworthysystems/l4v"
+      run: |
+        docker pull trustworthysystems/camkes:${TAG}-amd64
+        docker tag trustworthysystems/camkes:${TAG}-amd64 trustworthysystems/camkes:latest
+        ./build.sh -v -b l4v
+        docker tag trustworthysystems/l4v:latest trustworthysystems/l4v:${TAG}
+
+    - name: Authenticate
+      if: ${{ github.repository_owner == 'seL4' }}
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USER }}
+        password: ${{ secrets.DOCKER_TOKEN }}
+
+    - name: "Push trustworthysystems/l4v"
+      if: ${{ github.repository_owner == 'seL4' }}
+      run: |
+        docker push trustworthysystems/l4v:${TAG}
+        docker tag trustworthysystems/l4v:${TAG} trustworthysystems/l4v:latest
+        docker push trustworthysystems/l4v:latest
+
+  multi-arch:
+    name: Multi-arch images
+    runs-on: ubuntu-latest
+    needs: [tag, build-amd64, build-arm64]
+    if: ${{ github.repository_owner == 'seL4' }}
+    env:
+      TAG: ${{ needs.tag.outputs.tag }}
+    steps:
+      - name: Authenticate
+        if: ${{ github.repository_owner == 'seL4' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: "Multi-arch seL4"
+        run: |
+          docker buildx imagetools create -t trustworthysystems/sel4:${TAG} \
+            trustworthysystems/sel4:${TAG}-arm64 \
+            trustworthysystems/sel4:${TAG}-amd64
+
+          docker buildx imagetools create -t trustworthysystems/sel4:latest \
+            trustworthysystems/sel4:${TAG}-arm64 \
+            trustworthysystems/sel4:${TAG}-amd64
+
+      - name: "Multi-arch CAmkES"
+        run: |
+          docker buildx imagetools create -t trustworthysystems/camkes:${TAG} \
+            trustworthysystems/camkes:${TAG}-arm64 \
+            trustworthysystems/camkes:${TAG}-amd64
+
+          docker buildx imagetools create -t trustworthysystems/camkes:latest \
+            trustworthysystems/camkes:${TAG}-arm64 \
+            trustworthysystems/camkes:${TAG}-amd64
+
+      - name: "Multi-arch CAmkES+CakeML+Rust"
+        run: |
+          docker buildx imagetools create -t trustworthysystems/camkes-cakeml-rust:${TAG} \
+            trustworthysystems/camkes-cakeml-rust:${TAG}-arm64 \
+            trustworthysystems/camkes-cakeml-rust:${TAG}-amd64
+
+          docker buildx imagetools create -t trustworthysystems/camkes-cakeml-rust:latest \
+            trustworthysystems/camkes-cakeml-rust:${TAG}-arm64 \
+            trustworthysystems/camkes-cakeml-rust:${TAG}-amd64
+
+  dispatch:
+    name: Dispatch
+    runs-on: ubuntu-latest
+    needs: [multi-arch]
+    if: ${{ github.repository_owner == 'seL4' }}
+    steps:
+      - name: Trigger ci-actions deployment
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.PRIV_REPO_TOKEN }}
+          repository: seL4/ci-actions
+          event-type: deps-update

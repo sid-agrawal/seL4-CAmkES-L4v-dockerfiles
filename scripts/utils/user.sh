@@ -29,7 +29,7 @@ fgroup="${group_info[0]}"
 fgid="${group_info[2]}"
 
 GROUP_OK=false
-if [ "$fgroup" == "$GROUP" ] && [ "$fgid" == "$GID" ] ; then
+if [ "$fgroup" = "$GROUP" ] && [ "$fgid" = "$GID" ] ; then
     # This means the group creation has gone OK, so make a user
     # with the corresponding group
     GROUP_OK=true
@@ -83,7 +83,8 @@ EOF
 
 mkdir "/home/${UNAME}"
 
-# Put in some branding
+# Put in some branding. This is in the volume, so it can be edited/removed by
+# the user.
 # shellcheck disable=SC2129
 cat << EOF >> "/home/${UNAME}/.bashrc"
 echo '___                                   '
@@ -97,26 +98,25 @@ echo '    /                                 '
 echo 'Hello, welcome to the seL4/CAmkES/L4v docker build environment'
 EOF
 
-# This is a small hack. When the dockerfiles are building, many of
-# the env things are set into the .bashrc of root (since they're
-# building as the root user). Here we just copy all those declarations
-# and put them in this user's .bashrc.
-# This can be an issue with regard to the NOTE above, about docker
-# volumes.
-grep "export" /root/.bashrc >> "/home/${UNAME}/.bashrc"
+# Since the user home is mounted as a volume, we do not write to ~/.bashrc, but
+# modify the system-wide bashrc instead. /etc/profile.d/ does not work, because
+# it's not a login shell.
+#
+# When the dockerfiles are building, many of the env settings are written into
+# /root/.bashrc by various install tools. We copy all those declarations.
+RC_FILE="/etc/bash.bashrc"
+grep "export" /root/.bashrc >> "${RC_FILE}"
 
-# Note that this block does not do parameter expansion, so will be
-# copied verbatim into the user's .bashrc.
-# We use this to ensure they have the repo program in their path,
-# and to ensure they start in the /host dir (aka, their own file
-# path)
-cat << 'EOF' >> "/home/${UNAME}/.bashrc"
+# The following are in addition to the declarations in /root/.bashrc. Note that
+# this block does not do parameter expansion, so will be copied verbatim.
+cat << 'EOF' >> "${RC_FILE}"
 export PATH=/scripts/repo:$PATH
+export GHCUP_INSTALL_BASE_PREFIX=/opt/ghcup
+[ -r /opt/ghcup/.ghcup/env ] && source /opt/ghcup/.ghcup/env
 cd /host
 EOF
 
-# Set an appropriate chown setting, based on if the group setup
-# went OK
+# Set an appropriate chown setting, based on if the group setup went OK
 chown_setting="${UNAME}"
 if [ "$GROUP_OK" = true ]; then
     chown_setting="${UNAME}:${GROUP}"
@@ -127,6 +127,9 @@ mkdir -p /isabelle
 chown -R "$chown_setting" /isabelle
 # Isabelle expects a home dir folder.
 ln -s /isabelle "/home/${UNAME}/.isabelle"
+
+# Make Haskell installation writable if it exists
+[ -d /opt/ghcup ] && chown -R "${UNAME}" /opt/ghcup
 
 # Make sure the user owns their home dir
 chown -R "$chown_setting" "/home/${UNAME}"

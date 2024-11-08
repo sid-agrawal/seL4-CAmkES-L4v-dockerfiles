@@ -13,7 +13,7 @@ set -ef
 : "${DOCKERHUB:=trustworthysystems/}"
 
 # Base images
-: "${DEBIAN_IMG:=debian:bullseye-20210816-slim}"
+: "${DEBIAN_IMG:=debian:bullseye-slim}"
 : "${BASETOOLS_IMG:=base_tools}"
 
 # Core images
@@ -33,7 +33,11 @@ set -ef
 
 # Extra vars
 DOCKER_BUILD="docker build"
+DOCKER_INSPECT="docker inspect"
 DOCKER_FLAGS="--force-rm=true"
+
+# By default use host architecture
+: "${HOST_ARCH:=$(arch)}"
 
 # Special variables to be passed through Docker to the build scripts
 : "${SCM}"
@@ -61,7 +65,7 @@ build_internal_image()
 
     build_args_to_pass_to_docker=$(echo "$build_args" | grep "=" | awk '{print "--build-arg", $1}')
     # shellcheck disable=SC2086
-    $DOCKER_BUILD $DOCKER_FLAGS \
+    $DOCKER_BUILD --platform $DOCKER_PLATFORM $DOCKER_FLAGS \
         --build-arg BASE_IMG="$base_img" \
         --build-arg SCM="$SCM" \
         $build_args_to_pass_to_docker \
@@ -69,6 +73,9 @@ build_internal_image()
         -t "$img_name" \
         "$@" \
         .
+
+    echo "Size of $img_name:"
+    $DOCKER_INSPECT -f "{{ .Size }}" "$img_name" | xargs printf "%'d\n"
 }
 
 build_image()
@@ -90,8 +97,8 @@ apply_software_to_image()
     shift 4
 
     # NOTE: it's OK to supply docker build-args that aren't requested in the Dockerfile
-
-    $DOCKER_BUILD $DOCKER_FLAGS \
+    # shellcheck disable=SC2086
+    $DOCKER_BUILD --platform $DOCKER_PLATFORM $DOCKER_FLAGS \
 		--build-arg BASE_BUILDER_IMG="$DOCKERHUB$prebuilt_img" \
 		--build-arg BASE_IMG="$DOCKERHUB$orig_img" \
         --build-arg SCM="$SCM" \
@@ -99,6 +106,9 @@ apply_software_to_image()
 		-t "$DOCKERHUB$new_img" \
         "$@" \
 		.
+
+    echo "Size of $new_img:"
+    $DOCKER_INSPECT -f "{{ .Size }}" "$new_img" | xargs printf "%'d\n"
 }
 ############################################
 
@@ -165,7 +175,7 @@ show_help()
                             | sort \
                             | tr "\n" "|")
     cat <<EOF
-    build.sh [-r] [-v] [-p] -b [sel4|camkes|l4v] -s [$available_software] -s ... -e MAKE_CACHES=no -e ...
+    build.sh [-r] [-v] [-p] [-a arch] -b [sel4|camkes|l4v] -s [$available_software] -s ... -e MAKE_CACHES=no -e ...
 
      -r     Rebuild docker images (don't use the docker cache)
      -v     Verbose mode
@@ -173,6 +183,8 @@ show_help()
      -e     Build arguments (NAME=VALUE) to docker build. Use a -e for each build arg.
      -p     Pull base image first. Rather than build the base image,
             get it from the web first
+     -a     Supply x86_64 for building Intel images, and arm64 for Arm images.
+            Defaults to x86_64 on x86-based hosts and arm64 on ARM64 hosts.
 
     Sneaky hints:
      - To build 'prebuilt' images, you can run:
@@ -189,7 +201,7 @@ img_to_build=
 software_to_apply=
 pull_base_first=
 
-while getopts "h?pvb:rs:e:" opt
+while getopts "h?pvb:rs:e:a:" opt
 do
     case "$opt" in
     h|\?)
@@ -208,11 +220,26 @@ do
         ;;
     e)  build_args="$build_args\n$OPTARG"
         ;;
+    a)  HOST_ARCH="$OPTARG"
+        ;;
     :)  echo "Option -$opt requires an argument." >&2
         exit 1
         ;;
     esac
 done
+
+if [ "$HOST_ARCH" = "x86_64" ] || \
+   [ "$HOST_ARCH" = "amd64" ] || \
+   [ "$HOST_ARCH" = "i386" ]; then
+    DOCKER_PLATFORM="linux/amd64"
+elif [ "$HOST_ARCH" = "arm64" ]; then
+    DOCKER_PLATFORM="linux/arm64"
+else
+    echo "Unsupported host architecture: $HOST_ARCH"
+    exit 1
+fi
+
+echo "Building for $DOCKER_PLATFORM"
 
 if [ -z "$img_to_build" ]
 then
